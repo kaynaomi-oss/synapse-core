@@ -1,4 +1,5 @@
 use sqlx::PgPool;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use tracing::{error, info};
@@ -7,6 +8,7 @@ use tracing::{error, info};
 pub struct PartitionManager {
     pool: PgPool,
     interval: Duration,
+    limiter: Option<Arc<crate::services::ResourceLimiter>>,
 }
 
 impl PartitionManager {
@@ -14,6 +16,19 @@ impl PartitionManager {
         Self {
             pool,
             interval: Duration::from_secs(interval_hours * 3600),
+            limiter: None,
+        }
+    }
+
+    pub fn with_limiter(
+        pool: PgPool,
+        interval_hours: u64,
+        limiter: Arc<crate::services::ResourceLimiter>,
+    ) -> Self {
+        Self {
+            pool,
+            interval: Duration::from_secs(interval_hours * 3600),
+            limiter: Some(limiter),
         }
     }
 
@@ -25,7 +40,22 @@ impl PartitionManager {
 
             loop {
                 interval.tick().await;
-                if let Err(e) = self.maintain_partitions().await {
+                let result = if let Some(ref limiter) = self.limiter {
+                    limiter
+                        .run(async {
+                            self.maintain_partitions().await
+                        })
+                        .await
+                        .map_err(|e| sqlx::Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            e.to_string(),
+                        )))
+                        .and_then(|r| r)
+                } else {
+                    self.maintain_partitions().await
+                };
+
+                if let Err(e) = result {
                     error!("Partition maintenance failed: {}", e);
                 } else {
                     info!("Partition maintenance completed successfully");

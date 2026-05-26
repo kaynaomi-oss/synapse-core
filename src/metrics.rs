@@ -128,6 +128,14 @@ pub fn pending_queue_depth() -> ObservableGauge<u64> {
         .init()
 }
 
+/// Background task timeout counter.
+pub fn background_task_timeout_total() -> Counter<u64> {
+    meter()
+        .u64_counter("background_task_timeout_total")
+        .with_description("Number of background tasks that exceeded their timeout")
+        .init()
+}
+
 // ---------------------------------------------------------------------------
 // Provider initialisation
 // ---------------------------------------------------------------------------
