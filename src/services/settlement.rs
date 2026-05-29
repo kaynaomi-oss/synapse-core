@@ -4,6 +4,8 @@ use crate::error::AppError;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use sqlx::PgPool;
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
 use uuid::Uuid;
 
 /// Returns `true` when transitioning from `from` to `to` is allowed by the
@@ -28,6 +30,8 @@ pub struct SettlementService {
     pool: PgPool,
     max_batch_size: usize,
     min_tx_count: usize,
+    /// Health check timeout duration
+    health_check_timeout: Duration,
 }
 
 impl SettlementService {
@@ -36,6 +40,7 @@ impl SettlementService {
             pool,
             max_batch_size: 10_000,
             min_tx_count: 1,
+            health_check_timeout: Duration::from_secs(5),
         }
     }
 
@@ -44,6 +49,35 @@ impl SettlementService {
             pool,
             max_batch_size,
             min_tx_count,
+            health_check_timeout: Duration::from_secs(5),
+        }
+    }
+
+    /// Check if the settlement service is healthy
+    /// Returns Ok(()) if healthy, Err(String) otherwise
+    pub async fn check_health(&self) -> Result<(), String> {
+        // Check database connectivity
+        let start = Instant::now();
+        match timeout(self.health_check_timeout, sqlx::query("SELECT 1").execute(&self.pool)).await {
+            Ok(result) => {
+                match result {
+                    Ok(_) => {
+                        tracing::debug!(
+                            "Settlement service database health check succeeded in {}ms",
+                            start.elapsed().as_millis()
+                        );
+                        Ok(())
+                    }
+                    Err(e) => {
+                        tracing::error!("Settlement service database health check failed: {}", e);
+                        Err(format!("Database connection failed: {}", e))
+                    }
+                }
+            }
+            Err(_) => {
+                tracing::error!("Settlement service database health check timed out after {}ms", self.health_check_timeout.as_millis());
+                Err(format!("Database health check timed out after {}ms", self.health_check_timeout.as_millis()))
+            }
         }
     }
 
@@ -274,5 +308,32 @@ mod tests {
         );
         assert_eq!(svc.max_batch_size, 10_000);
         assert_eq!(svc.min_tx_count, 1);
+    }
+
+    #[tokio::test]
+    async fn health_check_success() {
+        // Create a dummy pool that will succeed
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://dummy")
+            .unwrap();
+        
+        let svc = SettlementService::new(pool);
+        
+        // This should succeed with a dummy pool
+        assert!(svc.check_health().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn health_check_timeout() {
+        // Create a service with very short timeout
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://dummy")
+            .unwrap();
+        
+        let mut svc = SettlementService::new(pool);
+        svc.health_check_timeout = std::time::Duration::from_millis(1);
+        
+        // This should timeout quickly
+        assert!(svc.check_health().await.is_err());
     }
 }
