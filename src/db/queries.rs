@@ -1,3 +1,42 @@
+//! Database query functions for Synapse Core.
+//!
+//! # Input Validation Contract
+//!
+//! All public query functions in this module accept **typed, validated** inputs.
+//! Raw user-supplied strings are **never** interpolated into SQL; every value is
+//! passed through sqlx's `bind()` API which uses PostgreSQL wire-protocol
+//! parameterisation (`$1`, `$2`, …).  This eliminates SQL injection by
+//! construction — the database driver transmits parameter values separately from
+//! the query text.
+//!
+//! ## Validation layers (outermost → innermost)
+//!
+//! 1. **HTTP handler** — `src/validation/mod.rs` checks field lengths, allowed
+//!    values, and character sets before the request reaches the database layer.
+//! 2. **Type system** — function signatures use `Uuid`, `BigDecimal`,
+//!    `DateTime<Utc>`, and `TransactionStatus` instead of raw strings wherever
+//!    possible, so invalid values are rejected at compile time or parse time.
+//! 3. **sqlx bind parameters** — every `sqlx::query` / `sqlx::query_as` call
+//!    uses positional `$N` placeholders; no string formatting is used to build
+//!    query text from user data.
+//! 4. **Query timeouts** — [`with_timeout`] wraps every query with a
+//!    per-tier deadline so that malformed inputs that cause slow plans cannot
+//!    hold connections indefinitely.
+//!
+//! ## What is NOT validated here
+//!
+//! Business-rule validation (e.g. "amount must be positive", "asset code must
+//! be in the allow-list") is performed in `src/validation/mod.rs` before this
+//! layer is reached.  This module trusts that its callers have already applied
+//! those checks.
+//!
+//! ## `query_builder.rs` — known limitation
+//!
+//! `src/db/query_builder.rs` builds dynamic SQL via string interpolation and is
+//! **not** used for user-facing endpoints.  It is an internal utility for
+//! admin/reporting queries where inputs are already validated and typed.  See
+//! `docs/database-input-validation.md` for the full security analysis.
+
 use crate::db::audit::{AuditLog, ENTITY_TRANSACTION};
 use crate::db::models::{Settlement, Transaction};
 use crate::tenant::TenantConfig;
