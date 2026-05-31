@@ -617,7 +617,7 @@ pub async fn update_transactions_settlement(
 
 async fn invalidate_transaction_caches(asset_code: &str) {
     if let Ok(redis_url) = std::env::var("REDIS_URL") {
-        if let Ok(cache) = crate::services::QueryCache::new(&redis_url) {
+        if let Ok(cache) = crate::services::QueryCache::new(&redis_url).await {
             let _ = cache.invalidate("query:status_counts").await;
             let _ = cache.invalidate("query:daily_totals:*").await;
             let _ = cache.invalidate("query:asset_stats").await;

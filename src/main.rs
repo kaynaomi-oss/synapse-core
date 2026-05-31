@@ -257,7 +257,7 @@ async fn serve(config: config::Config) -> anyhow::Result<()> {
     tracing::info!("Redis idempotency service initialized");
 
     // Initialize query cache
-    let query_cache = synapse_core::services::QueryCache::new(&config.redis_url)?;
+    let query_cache = synapse_core::services::QueryCache::new(&config.redis_url).await?;
     tracing::info!("Query cache initialized");
 
     // Warm cache on startup

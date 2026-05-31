@@ -101,7 +101,7 @@ impl AppState {
             start_time: std::time::Instant::now(),
             readiness: ReadinessState::new(),
             tx_broadcast: tx,
-            query_cache: QueryCache::new("redis://localhost:6379").unwrap(),
+            query_cache: QueryCache::new("redis://localhost:6379").await.unwrap(),
             profiling_manager: ProfilingManager::new(),
             tenant_configs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             secrets_store: None,
