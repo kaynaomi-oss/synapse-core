@@ -685,9 +685,17 @@ pub fn validate_idempotency_key(key: &str) -> Result<String, crate::error::AppEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::HashMap, fmt, sync::{Arc, Mutex}};
+    use std::{
+        collections::HashMap,
+        fmt,
+        sync::{Arc, Mutex},
+    };
     use tracing::field::{Field, Visit};
-    use tracing_subscriber::{layer::Context, registry::Registry, Layer};
+    use tracing_subscriber::{
+        layer::{Context, SubscriberExt},
+        registry::Registry,
+        Layer,
+    };
 
     struct FieldCollector {
         fields: Mutex<HashMap<String, String>>,
@@ -741,7 +749,12 @@ mod tests {
     where
         S: tracing::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
     {
-        fn on_new_span(&self, attrs: &tracing::span::Attributes<'_>, _id: &tracing::Id, _ctx: Context<'_, S>) {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            _id: &tracing::Id,
+            _ctx: Context<'_, S>,
+        ) {
             let mut visitor = FieldCollector::new();
             attrs.record(&mut visitor);
             let fields = visitor.fields.lock().unwrap().clone();

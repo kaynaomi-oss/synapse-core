@@ -179,7 +179,10 @@ pub async fn get_all_tenant_configs(pool: &PgPool) -> Result<Vec<TenantConfig>> 
     Ok(configs)
 }
 
-pub async fn get_active_tenant_rate_limit(pool: &PgPool, tenant_id: uuid::Uuid) -> Result<Option<i32>> {
+pub async fn get_active_tenant_rate_limit(
+    pool: &PgPool,
+    tenant_id: uuid::Uuid,
+) -> Result<Option<i32>> {
     with_timeout(
         QueryTier::Read,
         "SELECT rate_limit_per_minute FROM tenants WHERE tenant_id = $1 AND is_active = true",
@@ -1583,13 +1586,14 @@ pub async fn cleanup_expired_idempotency_keys(pool: &PgPool) -> Result<u64> {
 }
 
 #[cfg(test)]
-mod tests {
+mod integration_tests {
     use super::*;
     use sqlx::{migrate::Migrator, PgPool};
     use std::path::Path;
 
     async fn setup_test_db() -> PgPool {
-        let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
         let pool = PgPool::connect(&database_url)
             .await
             .expect("Failed to connect to test DB");
@@ -1646,7 +1650,9 @@ mod tests {
         .unwrap();
 
         let configs = get_all_tenant_configs(&pool).await.unwrap();
-        assert!(configs.iter().any(|cfg| cfg.tenant_id == tenant_id && cfg.rate_limit_per_minute == 50));
+        assert!(configs
+            .iter()
+            .any(|cfg| cfg.tenant_id == tenant_id && cfg.rate_limit_per_minute == 50));
     }
 
     // --- Rate limit validation unit tests (no DB required) ---
@@ -1690,9 +1696,14 @@ mod tests {
     #[tokio::test]
     async fn test_update_tenant_rate_limit_validation_exceeds_max() {
         let pool = PgPool::connect_lazy("postgres://localhost/nonexistent").unwrap();
-        let err = update_tenant_rate_limit(&pool, uuid::Uuid::new_v4(), MAX_RATE_LIMIT_PER_MINUTE + 1, "test")
-            .await
-            .unwrap_err();
+        let err = update_tenant_rate_limit(
+            &pool,
+            uuid::Uuid::new_v4(),
+            MAX_RATE_LIMIT_PER_MINUTE + 1,
+            "test",
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.to_string().contains("exceeds maximum"),
             "unexpected error: {err}"

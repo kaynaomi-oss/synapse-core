@@ -538,13 +538,11 @@ mod tests {
         // Verify the scheduler will register this job under the expected name.
         // We instantiate a dummy job using a test pool and client.
         // NOTE: HorizonClient::new does not open a network connection.
-        use crate::services::scheduler::Job as SchedulerJob;
-
         let client = HorizonClient::new("http://localhost:9999".to_string());
         // We cannot build a PgPool without a live DB, so we only test the name/schedule
         // methods via a type-erased check against known string literals.
         let _ = client; // ensure it compiles
-        // The job metadata is verifiable without constructing ReconciliationJob.
+                        // The job metadata is verifiable without constructing ReconciliationJob.
         assert_eq!("daily_reconciliation", "daily_reconciliation");
         assert_eq!("0 0 2 * * *", "0 0 2 * * *");
     }
@@ -655,7 +653,14 @@ mod tests {
             .unwrap();
         let mut server = mockito::Server::new_async().await;
         let account = "GORPHAN_ACCOUNT";
-        let record = payment_record("pay-chain-001", "GSRC", account, "25.00", "USDC", Some("chain-only-memo"));
+        let record = payment_record(
+            "pay-chain-001",
+            "GSRC",
+            account,
+            "25.00",
+            "USDC",
+            Some("chain-only-memo"),
+        );
         let _mock = server
             .mock(
                 "GET",
@@ -675,7 +680,10 @@ mod tests {
 
         assert_eq!(report.total_chain_payments, 1);
         assert_eq!(report.orphaned_payments.len(), 1);
-        assert_eq!(report.orphaned_payments[0].memo.as_deref(), Some("chain-only-memo"));
+        assert_eq!(
+            report.orphaned_payments[0].memo.as_deref(),
+            Some("chain-only-memo")
+        );
         assert!(report.missing_on_chain.is_empty());
         assert!(report.amount_mismatches.is_empty());
     }
@@ -724,7 +732,10 @@ mod tests {
         let report = svc.reconcile(account, start, end).await.unwrap();
 
         assert_eq!(report.missing_on_chain.len(), 1);
-        assert_eq!(report.missing_on_chain[0].memo.as_deref(), Some(memo.as_str()));
+        assert_eq!(
+            report.missing_on_chain[0].memo.as_deref(),
+            Some(memo.as_str())
+        );
         assert!(report.orphaned_payments.is_empty());
         assert!(report.amount_mismatches.is_empty());
 
@@ -761,7 +772,14 @@ mod tests {
         .await
         .unwrap();
 
-        let record = payment_record("pay-mismatch-001", "GSRC", account, "99.00", "USDC", Some(&memo));
+        let record = payment_record(
+            "pay-mismatch-001",
+            "GSRC",
+            account,
+            "99.00",
+            "USDC",
+            Some(&memo),
+        );
         let mut server = mockito::Server::new_async().await;
         let _mock = server
             .mock(
@@ -781,7 +799,10 @@ mod tests {
         assert_eq!(report.amount_mismatches.len(), 1);
         assert_eq!(report.amount_mismatches[0].db_amount, "100.00");
         assert_eq!(report.amount_mismatches[0].chain_amount, "99.00");
-        assert_eq!(report.amount_mismatches[0].memo.as_deref(), Some(memo.as_str()));
+        assert_eq!(
+            report.amount_mismatches[0].memo.as_deref(),
+            Some(memo.as_str())
+        );
         assert!(report.missing_on_chain.is_empty());
         assert!(report.orphaned_payments.is_empty());
 
@@ -817,7 +838,14 @@ mod tests {
         .await
         .unwrap();
 
-        let record = payment_record("pay-clean-001", "GSRC", account, "42.00", "USDC", Some(&memo));
+        let record = payment_record(
+            "pay-clean-001",
+            "GSRC",
+            account,
+            "42.00",
+            "USDC",
+            Some(&memo),
+        );
         let mut server = mockito::Server::new_async().await;
         let _mock = server
             .mock(
@@ -858,14 +886,14 @@ mod tests {
         let account = "GPARTIAL_ACCOUNT";
         let (start, end) = make_period();
 
-        let memo_match    = format!("partial-match-{}", Uuid::new_v4());
-        let memo_missing  = format!("partial-missing-{}", Uuid::new_v4());
+        let memo_match = format!("partial-match-{}", Uuid::new_v4());
+        let memo_missing = format!("partial-missing-{}", Uuid::new_v4());
         let memo_mismatch = format!("partial-mismatch-{}", Uuid::new_v4());
-        let memo_orphan   = format!("partial-orphan-{}", Uuid::new_v4());
+        let memo_orphan = format!("partial-orphan-{}", Uuid::new_v4());
 
         for (memo, amount) in [
-            (&memo_match,    "10.00"),
-            (&memo_missing,  "20.00"),
+            (&memo_match, "10.00"),
+            (&memo_missing, "20.00"),
             (&memo_mismatch, "30.00"),
         ] {
             sqlx::query(
@@ -884,9 +912,30 @@ mod tests {
         }
 
         let chain_records = vec![
-            payment_record("cp-match",    "GSRC", account, "10.00", "USDC", Some(&memo_match)),
-            payment_record("cp-mismatch", "GSRC", account, "31.00", "USDC", Some(&memo_mismatch)),
-            payment_record("cp-orphan",   "GSRC", account, "99.00", "USDC", Some(&memo_orphan)),
+            payment_record(
+                "cp-match",
+                "GSRC",
+                account,
+                "10.00",
+                "USDC",
+                Some(&memo_match),
+            ),
+            payment_record(
+                "cp-mismatch",
+                "GSRC",
+                account,
+                "31.00",
+                "USDC",
+                Some(&memo_mismatch),
+            ),
+            payment_record(
+                "cp-orphan",
+                "GSRC",
+                account,
+                "99.00",
+                "USDC",
+                Some(&memo_orphan),
+            ),
         ];
         let mut server = mockito::Server::new_async().await;
         let _mock = server
@@ -905,9 +954,15 @@ mod tests {
         let report = svc.reconcile(account, start, end).await.unwrap();
 
         assert_eq!(report.missing_on_chain.len(), 1, "one missing");
-        assert_eq!(report.missing_on_chain[0].memo.as_deref(), Some(memo_missing.as_str()));
+        assert_eq!(
+            report.missing_on_chain[0].memo.as_deref(),
+            Some(memo_missing.as_str())
+        );
         assert_eq!(report.orphaned_payments.len(), 1, "one orphaned");
-        assert_eq!(report.orphaned_payments[0].memo.as_deref(), Some(memo_orphan.as_str()));
+        assert_eq!(
+            report.orphaned_payments[0].memo.as_deref(),
+            Some(memo_orphan.as_str())
+        );
         assert_eq!(report.amount_mismatches.len(), 1, "one mismatch");
         assert_eq!(report.amount_mismatches[0].db_amount, "30.00");
         assert_eq!(report.amount_mismatches[0].chain_amount, "31.00");
@@ -960,7 +1015,10 @@ mod tests {
         let report = svc.reconcile(account, start, end).await.unwrap();
 
         // memo-less DB rows are intentionally skipped by the reconciliation algorithm.
-        assert!(report.missing_on_chain.is_empty(), "memo-less rows should not appear as missing");
+        assert!(
+            report.missing_on_chain.is_empty(),
+            "memo-less rows should not appear as missing"
+        );
         assert_eq!(report.total_db_transactions, 1);
 
         sqlx::query("DELETE FROM transactions WHERE stellar_account = $1")
@@ -1028,5 +1086,4 @@ mod tests {
             .await
             .unwrap();
     }
-
 } // end mod tests

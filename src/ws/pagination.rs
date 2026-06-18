@@ -130,7 +130,7 @@ impl fmt::Display for Cursor {
 /// Parameters extracted from a client's pagination request.
 ///
 /// Construct via [`PaginationRequest::parse`] which performs all validation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaginationParams {
     /// Validated and clamped number of events to return.
     pub page_size: u32,
@@ -570,10 +570,7 @@ mod tests {
                 page_size: size,
                 cursor: None,
             };
-            assert!(
-                req.parse().is_err(),
-                "page_size={size} should be rejected"
-            );
+            assert!(req.parse().is_err(), "page_size={size} should be rejected");
         }
     }
 }

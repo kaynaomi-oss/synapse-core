@@ -2,7 +2,6 @@ pub mod auth;
 pub mod cache;
 pub mod config;
 pub mod db;
-pub mod payments;
 pub mod error;
 pub mod graphql;
 pub mod handlers;
@@ -262,7 +261,10 @@ pub fn create_app(app_state: AppState) -> Router {
         .merge(
             Router::new()
                 .route("/ws", get(handlers::ws::ws_handler))
-                .route("/reconnect/status", get(handlers::reconnection::reconnect_status))
+                .route(
+                    "/reconnect/status",
+                    get(handlers::reconnection::reconnect_status),
+                )
                 .route("/reconnect", post(handlers::reconnection::reconnect))
                 .with_state(app_state),
         )

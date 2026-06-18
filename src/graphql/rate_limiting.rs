@@ -46,7 +46,7 @@ use std::time::Duration;
 
 use async_graphql::{
     extensions::{Extension, ExtensionContext, ExtensionFactory, NextExecute},
-    Response,
+    ErrorExtensions, Response,
 };
 
 use crate::cache::rate_limiting::{RateLimitConfig, RateLimitStrategy, RateLimiter};
@@ -244,7 +244,9 @@ impl Extension for GraphQlRateLimitExtension {
                     e.set("retryAfter", remaining_hint);
                 });
 
-            return Response::from_errors(vec![err.into()]);
+            return Response::from_errors(vec![
+                err.into_server_error(async_graphql::Pos::default())
+            ]);
         }
 
         next.run(ctx, operation_name).await

@@ -19,12 +19,12 @@
 //! ordering so that writes in one thread are immediately visible to readers in
 //! other threads. [`RateLimiter`] is already lock-free (`Arc<Inner>` with
 //! atomics), so no external `Mutex` is needed.
+use crate::auth::input_validation::{validate_api_key, validate_auth_header};
+use crate::cache::rate_limiting::RateLimiter;
+use crate::validation::{sanitize_string, validate_required};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use crate::cache::rate_limiting::RateLimiter;
-use crate::auth::input_validation::{validate_api_key, validate_auth_header};
-use crate::validation::{validate_required, sanitize_string};
 
 /// Health status of a WebSocket connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,14 +114,12 @@ impl HealthChecker {
     /// Returns `Ok(())` if authentication passes or no auth key is configured.
     pub fn validate_auth(&self, auth_header: &str) -> Result<(), String> {
         if let Some(ref key) = self.auth_key {
-            if auth_header.starts_with("API-Key ") {
-                let provided_key = &auth_header[8..];
+            if let Some(provided_key) = auth_header.strip_prefix("API-Key ") {
                 validate_api_key(provided_key)?;
                 if provided_key != key.as_str() {
                     return Err("Invalid API key".to_string());
                 }
-            } else if auth_header.starts_with("Bearer ") {
-                let token = &auth_header[7..];
+            } else if let Some(token) = auth_header.strip_prefix("Bearer ") {
                 validate_auth_header(token)?;
             } else {
                 return Err("Invalid authorization header format".to_string());
@@ -140,8 +138,14 @@ impl HealthChecker {
     /// An empty string is accepted without further validation.
     pub fn validate_input(&self, input: &str) -> Result<(), String> {
         if !input.is_empty() {
+            // Reject inputs containing control characters (e.g. null bytes) outright
+            // rather than silently sanitizing them away — they indicate malformed or
+            // potentially malicious input.
+            if input.chars().any(|ch| ch.is_control()) {
+                return Err("input contains invalid control characters".to_string());
+            }
             let sanitized = sanitize_string(input);
-            validate_required("health_input", &sanitized)?;
+            validate_required("health_input", &sanitized).map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -230,7 +234,9 @@ mod tests {
         let auth_key = "test_api_key_1234567890123456789012".to_string();
         let checker = HealthChecker::new(Duration::from_secs(10), Some(auth_key.clone()));
 
-        assert!(checker.validate_auth("API-Key test_api_key_1234567890123456789012").is_ok());
+        assert!(checker
+            .validate_auth("API-Key test_api_key_1234567890123456789012")
+            .is_ok());
         assert!(checker.validate_auth("API-Key invalid_key").is_err());
         assert!(checker.validate_auth("Bearer token123").is_err());
     }
