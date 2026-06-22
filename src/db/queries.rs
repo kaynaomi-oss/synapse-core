@@ -420,36 +420,94 @@ where
 /// row instead of inserting a duplicate or double-writing the audit log.
 /// Coordinates with the `anchor_transaction_id` idempotency guard so the
 /// same inbound Anchor callback can't be persisted twice either.
-pub async fn insert_transaction(pool: &PgPool, tx: &Transaction) -> Result<Transaction> {
+/// Returns `(transaction, is_new)`.
+/// `is_new = true` means this delivery created a fresh row.
+/// `is_new = false` means a prior delivery already owns the `anchor_transaction_id`
+/// and the returned transaction is that existing row - no new row was written.
+pub async fn insert_transaction(pool: &PgPool, tx: &Transaction) -> Result<(Transaction, bool)> {
     with_timeout(
         QueryTier::Write,
         "INSERT INTO transactions ... RETURNING *",
         crate::utils::retry::retry_with_backoff("insert_transaction", 3, 100, || async {
             let mut db_tx = pool.begin().await?;
 
-            let (result, inserted) = persist_transaction(&mut db_tx, tx).await?;
-            if inserted {
+            let (result, is_new) = persist_transaction(&mut db_tx, tx).await?;
+            if is_new {
                 audit_transaction_creation(&mut db_tx, &result).await?;
             }
 
             db_tx.commit().await?;
 
-            // Invalidate cache after successful commit
-            invalidate_transaction_caches(&result.asset_code).await;
+            if is_new {
+                invalidate_transaction_caches(&result.asset_code).await;
+            }
 
-            Ok(result)
+            Ok((result, is_new))
         }),
     )
     .await
 }
 
-/// Inserts `tx`, returning the persisted row and whether this call actually
-/// performed the insert (`true`) or found it already committed by an earlier
-/// retry attempt (`false`).
+/// Inserts `tx`, returning `(row, is_new)`.
+///
+/// `is_new = true`  - this call wrote the row (first delivery or first successful retry).
+/// `is_new = false` - a prior delivery already owns `anchor_transaction_id`; the
+///                    returned row is that existing transaction. No second row is written.
+///
+/// Idempotency strategy:
+/// - When `anchor_transaction_id` is `Some`, we first attempt to claim it in
+///   `anchor_transaction_dedup`, a non-partitioned table whose PRIMARY KEY enforces
+///   cross-partition uniqueness. The claim and the transaction INSERT share the same
+///   DB transaction so they are atomic.
+/// - When `anchor_transaction_id` is `None`, no cross-delivery dedup is possible;
+///   each delivery creates a new row. The PK `(id, created_at)` guard still protects
+///   against retry-duplicates of the same `tx` object.
 async fn persist_transaction(
     db_tx: &mut SqlxTransaction<'_, Postgres>,
     tx: &Transaction,
 ) -> Result<(Transaction, bool)> {
+    // === Anchor-ID dedup guard (cross-partition uniqueness)
+    if let Some(ref anchor_id) = tx.anchor_transaction_id {
+        let claimed = sqlx::query(
+            r#"
+            INSERT INTO anchor_transaction_dedup
+                (anchor_transaction_id, transaction_id, transaction_created_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (anchor_transaction_id) DO NOTHING
+            "#,
+        )
+        .bind(anchor_id)
+        .bind(tx.id)
+        .bind(tx.created_at)
+        .execute(&mut **db_tx)
+        .await?;
+
+        if claimed.rows_affected() == 0 {
+            // Another delivery (or a previously committed retry) already owns this key.
+            let row = sqlx::query(
+                "SELECT transaction_id, transaction_created_at \
+                 FROM anchor_transaction_dedup WHERE anchor_transaction_id = $1",
+            )
+            .bind(anchor_id)
+            .fetch_one(&mut **db_tx)
+            .await?;
+
+            let existing_id: Uuid = row.get("transaction_id");
+            let existing_created_at: chrono::DateTime<Utc> = row.get("transaction_created_at");
+
+            let existing = sqlx::query_as::<_, Transaction>(
+                "SELECT * FROM transactions WHERE id = $1 AND created_at = $2",
+            )
+            .bind(existing_id)
+            .bind(existing_created_at)
+            .fetch_one(&mut **db_tx)
+            .await?;
+
+            return Ok((existing, false));
+        }
+    }
+
+    // === Main insert (PK guard for retry safety)
     let inserted = sqlx::query_as::<_, Transaction>(
         r#"
         INSERT INTO transactions (
@@ -457,8 +515,7 @@ async fn persist_transaction(
             created_at, updated_at, anchor_transaction_id, callback_type, callback_status,
             settlement_id, memo, memo_type, metadata
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        -- The table is partitioned by created_at, so the primary key (and the
-        -- only conflict target Postgres accepts here) is (id, created_at).
+        -- Partitioned by created_at; only (id, created_at) is a valid conflict target.
         ON CONFLICT (id, created_at) DO NOTHING
         RETURNING *
         "#,
@@ -483,6 +540,7 @@ async fn persist_transaction(
     match inserted {
         Some(row) => Ok((row, true)),
         None => {
+            // PK conflict: an earlier retry already committed this exact row.
             let row = sqlx::query_as::<_, Transaction>(
                 "SELECT * FROM transactions WHERE id = $1 AND created_at = $2",
             )
@@ -1729,6 +1787,98 @@ mod integration_tests {
             .expect("Failed to load migrations");
         migrator.run(&pool).await.expect("Failed to run migrations");
         pool
+    }
+
+    // === Idempotency tests
+
+    #[ignore = "Requires DATABASE_URL"]
+    #[tokio::test]
+    async fn test_duplicate_anchor_id_returns_same_row() {
+        let pool = setup_test_db().await;
+        let anchor_id = format!("anchor-{}", uuid::Uuid::new_v4());
+        let stellar = "G".to_string() + &"A".repeat(55);
+
+        let tx1 = crate::db::models::Transaction::new(
+            stellar.clone(),
+            sqlx::types::BigDecimal::from(100u32),
+            "USD".to_string(),
+            Some(anchor_id.clone()),
+            None, None, None, None, None,
+        );
+        let (t1, is_new1) = insert_transaction(&pool, &tx1).await.unwrap();
+        assert!(is_new1, "first delivery must be new");
+
+        // Second delivery with same anchor_transaction_id but different tx object
+        let tx2 = crate::db::models::Transaction::new(
+            stellar.clone(),
+            sqlx::types::BigDecimal::from(200u32),
+            "EUR".to_string(),
+            Some(anchor_id.clone()),
+            None, None, None, None, None,
+        );
+        let (t2, is_new2) = insert_transaction(&pool, &tx2).await.unwrap();
+        assert!(!is_new2, "duplicate delivery must not be new");
+        assert_eq!(t1.id, t2.id, "both deliveries must return the same transaction id");
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transactions WHERE anchor_transaction_id = $1",
+        )
+        .bind(&anchor_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "exactly one row must exist in the DB");
+    }
+
+    #[ignore = "Requires DATABASE_URL"]
+    #[tokio::test]
+    async fn test_null_anchor_id_always_inserts() {
+        let pool = setup_test_db().await;
+        let stellar = "G".to_string() + &"A".repeat(55);
+
+        let tx1 = crate::db::models::Transaction::new(
+            stellar.clone(), sqlx::types::BigDecimal::from(100u32),
+            "USD".to_string(), None, None, None, None, None, None,
+        );
+        let tx2 = crate::db::models::Transaction::new(
+            stellar.clone(), sqlx::types::BigDecimal::from(100u32),
+            "USD".to_string(), None, None, None, None, None, None,
+        );
+
+        let (_, is_new1) = insert_transaction(&pool, &tx1).await.unwrap();
+        let (_, is_new2) = insert_transaction(&pool, &tx2).await.unwrap();
+        assert!(is_new1, "first null-key delivery must be new");
+        assert!(is_new2, "second null-key delivery must also be new (different tx)");
+    }
+
+    #[ignore = "Requires DATABASE_URL"]
+    #[tokio::test]
+    async fn test_retry_after_commit_no_duplicate() {
+        let pool = setup_test_db().await;
+        let anchor_id = format!("retry-{}", uuid::Uuid::new_v4());
+        let stellar = "G".to_string() + &"A".repeat(55);
+
+        let tx = crate::db::models::Transaction::new(
+            stellar.clone(), sqlx::types::BigDecimal::from(50u32),
+            "USD".to_string(), Some(anchor_id.clone()), None, None, None, None, None,
+        );
+
+        let (t1, is_new1) = insert_transaction(&pool, &tx).await.unwrap();
+        assert!(is_new1);
+
+        // Simulate retry: same tx object, same id, same anchor_transaction_id
+        let (t2, is_new2) = insert_transaction(&pool, &tx).await.unwrap();
+        assert!(!is_new2, "retry must not create a new row");
+        assert_eq!(t1.id, t2.id);
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transactions WHERE id = $1",
+        )
+        .bind(t1.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "retry must not produce a duplicate row");
     }
 
     #[ignore = "Requires DATABASE_URL"]
