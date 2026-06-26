@@ -86,3 +86,74 @@ impl<'a> Transactions<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn transaction_body(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "stellar_account": "GABC1234567890123456789012345678901234567890123456789012",
+            "amount": "100.00",
+            "asset_code": "USD",
+            "status": "pending",
+            "created_at": "2024-01-15T10:00:00Z",
+            "updated_at": "2024-01-15T10:00:00Z",
+            "anchor_transaction_id": null,
+            "callback_type": null,
+            "callback_status": null,
+            "settlement_id": null,
+            "memo": null,
+            "memo_type": null,
+            "metadata": null
+        })
+    }
+
+    #[tokio::test]
+    async fn get_returns_transaction_on_200() {
+        let server = MockServer::start().await;
+        let tx_id = "550e8400-e29b-41d4-a716-446655440000";
+
+        Mock::given(method("GET"))
+            .and(path(format!("/transactions/{}", tx_id)))
+            .and(header("X-API-Key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(transaction_body(tx_id)))
+            .mount(&server)
+            .await;
+
+        let client = SynapseClient::new(server.uri(), "test-key");
+        let result = client.transactions().get(tx_id).await;
+
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        let tx = result.unwrap();
+        assert_eq!(tx.id, tx_id);
+        assert_eq!(tx.asset_code, "USD");
+        assert_eq!(tx.status, "pending");
+    }
+
+    #[tokio::test]
+    async fn get_returns_not_found_on_404() {
+        let server = MockServer::start().await;
+        let tx_id = "00000000-0000-0000-0000-000000000000";
+
+        Mock::given(method("GET"))
+            .and(path(format!("/transactions/{}", tx_id)))
+            .respond_with(
+                ResponseTemplate::new(404).set_body_string("Transaction 00000000 not found"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = SynapseClient::new(server.uri(), "test-key");
+        let result = client.transactions().get(tx_id).await;
+
+        assert!(
+            matches!(result, Err(SynapseError::NotFound(_))),
+            "expected NotFound, got: {:?}",
+            result
+        );
+    }
+}
