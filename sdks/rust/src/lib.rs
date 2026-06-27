@@ -7,4 +7,4 @@ pub mod retry;
 
 pub use client::SynapseClient;
 pub use error::SynapseError;
-pub use models::{ListParams, SearchParams};
+pub use models::{ListParams, SearchParams, Settlement, SettlementList, SettlementParams};

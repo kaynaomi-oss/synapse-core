@@ -1,4 +1,5 @@
 use crate::error::SynapseError;
+use crate::resources::settlements::Settlements;
 use crate::resources::transactions::Transactions;
 use crate::retry::{retry_with_backoff, DEFAULT_BASE_DELAY_MS, DEFAULT_MAX_ATTEMPTS};
 use serde::de::DeserializeOwned;
@@ -36,6 +37,11 @@ impl SynapseClient {
     /// Access the transactions resource.
     pub fn transactions(&self) -> Transactions<'_> {
         Transactions { client: self }
+    }
+
+    /// Access the settlements resource.
+    pub fn settlements(&self) -> Settlements<'_> {
+        Settlements { client: self }
     }
 
     /// Return a builder for constructing a [`SynapseClient`].
