@@ -1,4 +1,4 @@
-use crate::admin_models::{BulkStatusRequest, BulkStatusResponse};
+use crate::admin_models::{BulkStatusRequest, BulkStatusResponse, EndpointHealth};
 use crate::client::SynapseClient;
 use crate::error::SynapseError;
 
@@ -63,5 +63,61 @@ impl<'a> AdminClient<'a> {
         self.client
             .patch("/admin/transactions/bulk-status", &body)
             .await
+    }
+
+    /// Webhook endpoint health score operations.
+    pub fn webhook_health(&self) -> WebhookHealthClient<'a> {
+        WebhookHealthClient {
+            client: self.client,
+        }
+    }
+}
+
+/// Webhook endpoint health score operations.
+///
+/// Obtain via [`AdminClient::webhook_health`].
+pub struct WebhookHealthClient<'a> {
+    client: &'a SynapseClient,
+}
+
+impl<'a> WebhookHealthClient<'a> {
+    /// List health scores for every registered webhook endpoint.
+    ///
+    /// Calls `GET /admin/webhooks/health`.
+    pub async fn list(&self) -> Result<Vec<EndpointHealth>, SynapseError> {
+        self.client.get("/admin/webhooks/health").await
+    }
+
+    /// Get the health score for a single webhook endpoint.
+    ///
+    /// Calls `GET /admin/webhooks/health/:id`.
+    ///
+    /// A 404 for an unknown `id` is reported as
+    /// `SynapseError::Http { status: 404, .. }`, distinguishable from a
+    /// `SynapseError::Network` transport failure — match on `status` rather
+    /// than assuming any error means the endpoint is unreachable.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use synapse_sdk::{SynapseClient, SynapseError};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let client = SynapseClient::builder("https://api.example.com", "admin-key").build();
+    ///
+    /// match client.admin().webhook_health().get("unknown-id").await {
+    ///     Ok(health) => {
+    ///         println!("{}: {:.1}% success", health.url, health.success_rate * 100.0)
+    ///     }
+    ///     Err(SynapseError::Http { status: 404, .. }) => eprintln!("no such endpoint"),
+    ///     Err(SynapseError::Http { status, body }) => eprintln!("HTTP {status}: {body}"),
+    ///     Err(SynapseError::Network(e)) => eprintln!("transport error: {e}"),
+    /// }
+    /// # }
+    /// ```
+    pub async fn get(&self, id: &str) -> Result<EndpointHealth, SynapseError> {
+        let path = format!("/admin/webhooks/health/{}", id);
+        self.client.get(&path).await
     }
 }

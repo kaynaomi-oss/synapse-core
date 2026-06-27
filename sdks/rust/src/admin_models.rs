@@ -28,3 +28,18 @@ pub struct BulkStatusResponse {
     pub failed: usize,
     pub errors: Vec<BulkUpdateError>,
 }
+
+/// Health snapshot for a single webhook endpoint.
+///
+/// Mirrors the backend's `EndpointHealth`
+/// (`src/services/webhook_dispatcher.rs`). `success_rate` is a fraction in
+/// `[0.0, 1.0]`, not a percentage.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EndpointHealth {
+    pub id: String,
+    pub url: String,
+    pub enabled: bool,
+    pub success_rate: f64,
+    pub total_deliveries: i32,
+    pub last_success_at: Option<String>,
+}
