@@ -41,6 +41,88 @@ pub enum TxCommands {
         tx_id: Uuid,
     },
 
+    #[command(long_about = "List transactions with cursor-based pagination and optional date filters.
+
+All flags are optional. Cursors are opaque — always use next_cursor from previous response.
+Invalid or expired cursors return an error and must not be retried as-is.
+
+Examples:
+  synapse-core tx list --limit 50
+  synapse-core tx list --from-date 2024-01-01T00:00:00Z --to-date 2024-02-01T00:00:00Z
+  synapse-core tx list --cursor <cursor> --format json")]
+    List {
+        /// Opaque pagination cursor (use next_cursor from previous response)
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Maximum records per page (server default: 25, max: 100)
+        #[arg(long, short = 'l')]
+        limit: Option<i64>,
+
+        /// Inclusive ISO 8601 date range start (e.g., 2024-01-01T00:00:00Z)
+        #[arg(long)]
+        from_date: Option<String>,
+
+        /// Exclusive ISO 8601 date range end (e.g., 2024-02-01T00:00:00Z)
+        #[arg(long)]
+        to_date: Option<String>,
+
+        /// Output format (json or table; default: table)
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
+
+    #[command(long_about = "Search transactions by filter, returning a single page of matches.
+
+All filters are optional — omit a field to leave that dimension unfiltered.
+A search with no matches returns total=0 and empty results, not an error.
+
+Examples:
+  synapse-core tx search --status completed --asset-code USD
+  synapse-core tx search --min-amount 10.00 --max-amount 500.00
+  synapse-core tx search --stellar-account GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJIIAY3XDBKWV3UYSI7IFYWU4")]
+    Search {
+        /// Exact transaction status (e.g., pending, completed)
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Exact asset code (e.g., USD)
+        #[arg(long)]
+        asset_code: Option<String>,
+
+        /// Inclusive minimum amount as decimal (e.g., 10.00)
+        #[arg(long)]
+        min_amount: Option<String>,
+
+        /// Inclusive maximum amount as decimal (e.g., 500.00)
+        #[arg(long)]
+        max_amount: Option<String>,
+
+        /// Inclusive RFC 3339 range start (e.g., 2024-01-01T00:00:00Z)
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Exclusive RFC 3339 range end (e.g., 2024-02-01T00:00:00Z)
+        #[arg(long)]
+        to: Option<String>,
+
+        /// Exact Stellar account to filter by
+        #[arg(long)]
+        stellar_account: Option<String>,
+
+        /// Opaque pagination cursor (use next_cursor from previous response)
+        #[arg(long)]
+        cursor: Option<String>,
+
+        /// Maximum records per page (server default: 25, max: 100)
+        #[arg(long, short = 'l')]
+        limit: Option<i64>,
+
+        /// Output format (json or table; default: table)
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
+
     /// Run reconciliation report
     Reconcile {
         /// Stellar account to reconcile
@@ -293,4 +375,119 @@ pub async fn handle_backup_restore_pitr(
     _timestamp_str: &str,
 ) -> anyhow::Result<()> {
     anyhow::bail!("PITR restore service not yet implemented")
+}
+
+pub async fn handle_tx_list(
+    cursor: Option<String>,
+    limit: Option<i64>,
+    from_date: Option<String>,
+    to_date: Option<String>,
+    format: &str,
+) -> anyhow::Result<()> {
+    use synapse_sdk::{ListParams, SynapseClient};
+
+    let base_url = std::env::var("SYNAPSE_API_URL")
+        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let api_key =
+        std::env::var("SYNAPSE_API_KEY").unwrap_or_else(|_| "dev-key".to_string());
+
+    let client = SynapseClient::new(base_url, api_key);
+    let params = ListParams {
+        cursor,
+        limit,
+        from_date,
+        to_date,
+    };
+
+    match client.transactions().list(params).await {
+        Ok(result) => {
+            if format == "json" {
+                let json = serde_json::to_string_pretty(&result)?;
+                println!("{json}");
+            } else {
+                print_transactions_table(&result.data);
+                if result.meta.has_more {
+                    println!(
+                        "\nMore results available. Next cursor: {}",
+                        result.meta.next_cursor.unwrap_or_default()
+                    );
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            anyhow::bail!("{}", e)
+        }
+    }
+}
+
+pub async fn handle_tx_search(
+    status: Option<String>,
+    asset_code: Option<String>,
+    min_amount: Option<String>,
+    max_amount: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    stellar_account: Option<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    format: &str,
+) -> anyhow::Result<()> {
+    use synapse_sdk::{SearchParams, SynapseClient};
+
+    let base_url = std::env::var("SYNAPSE_API_URL")
+        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let api_key =
+        std::env::var("SYNAPSE_API_KEY").unwrap_or_else(|_| "dev-key".to_string());
+
+    let client = SynapseClient::new(base_url, api_key);
+    let filters = SearchParams {
+        status,
+        asset_code,
+        min_amount,
+        max_amount,
+        from,
+        to,
+        stellar_account,
+        cursor,
+        limit,
+    };
+
+    match client.transactions().search(filters).await {
+        Ok(result) => {
+            if format == "json" {
+                let json = serde_json::to_string_pretty(&result)?;
+                println!("{json}");
+            } else {
+                println!("Total matches: {}", result.total);
+                if !result.results.is_empty() {
+                    print_transactions_table(&result.results);
+                    if let Some(next) = result.next_cursor {
+                        println!("\nMore results available. Next cursor: {}", next);
+                    }
+                } else {
+                    println!("No transactions found.");
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            anyhow::bail!("{}", e)
+        }
+    }
+}
+
+fn print_transactions_table(transactions: &[synapse_sdk::Transaction]) {
+    println!(
+        "{:<36} {:<10} {:<12} {:<8} {:<26}",
+        "ID", "Status", "Amount", "Asset", "Created"
+    );
+    println!("{}", "-".repeat(98));
+    for tx in transactions {
+        let created = tx.created_at.format("%Y-%m-%d %H:%M:%S UTC");
+        println!(
+            "{:<36} {:<10} {:<12} {:<8} {:<26}",
+            tx.id, tx.status, tx.amount, tx.asset_code, created
+        );
+    }
 }
