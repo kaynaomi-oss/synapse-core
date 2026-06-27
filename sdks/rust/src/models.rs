@@ -199,3 +199,33 @@ pub struct RunReconciliationRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub period_hours: Option<i32>,
 }
+
+// ============================================================================
+// Admin: Settlement Models
+// ============================================================================
+
+/// A settlement record.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Settlement {
+    pub id: Uuid,
+    pub status: String,
+    pub total_amount: String,
+    pub reason: Option<String>,
+    pub actor: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Request to update a settlement's status.
+#[derive(Debug, Serialize)]
+pub struct UpdateSettlementStatusRequest {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// New total amount — only meaningful when transitioning to "adjusted".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_total: Option<String>,
+    /// Actor performing the change (defaults to "admin").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+}

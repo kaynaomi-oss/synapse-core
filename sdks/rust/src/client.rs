@@ -1,6 +1,6 @@
 use crate::error::SynapseError;
 use crate::retry::{retry_with_backoff, DEFAULT_BASE_DELAY_MS, DEFAULT_MAX_ATTEMPTS};
-use crate::resources::admin::AdminReconciliation;
+use crate::resources::admin::{AdminReconciliation, AdminSettlements};
 use crate::resources::transactions::Transactions;
 use serde::de::DeserializeOwned;
 
@@ -362,6 +362,11 @@ impl AdminSynapseClient {
     /// Access admin reconciliation operations.
     pub fn reconciliation(&self) -> AdminReconciliation {
         AdminReconciliation::new(self)
+    }
+
+    /// Access admin settlement operations.
+    pub fn settlements(&self) -> AdminSettlements {
+        AdminSettlements::new(self)
     }
 }
 
