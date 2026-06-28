@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+// ── Transaction models ────────────────────────────────────────────────────────
+
 /// A single transaction returned by the API.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Transaction {
@@ -89,4 +91,119 @@ pub struct ListParams {
     pub from_date: Option<String>,
     /// Exclusive ISO 8601 range end (e.g. `"2024-02-01T00:00:00Z"`).
     pub to_date: Option<String>,
+}
+
+// ── GraphQL models (issue #634) ───────────────────────────────────────────────
+
+/// Request body for `POST /graphql`.
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphQLRequest {
+    pub query: String,
+    pub variables: Option<serde_json::Value>,
+}
+
+/// A GraphQL application-level error returned inside an HTTP 200 response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GraphQLError {
+    pub message: String,
+}
+
+/// Response from `POST /graphql`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GraphQLResponse {
+    pub data: Option<serde_json::Value>,
+    #[serde(default)]
+    pub errors: Vec<GraphQLError>,
+}
+
+// ── Stats models (issue #633) ─────────────────────────────────────────────────
+
+/// Per-status transaction count returned by `GET /stats/status`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct StatusCount {
+    pub status: String,
+    pub count: i64,
+}
+
+/// Per-day transaction volume returned by `GET /stats/daily`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct DailyTotal {
+    pub date: String,
+    pub count: i64,
+    pub total_amount: String,
+}
+
+/// Per-asset statistics returned by `GET /stats/assets`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct AssetStats {
+    pub asset_code: String,
+    pub count: i64,
+    pub total_amount: String,
+}
+
+/// Cache metrics returned by `GET /stats/cache`.
+///
+/// Empty datasets return a zeroed structure, never `null`/`None`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CacheMetrics {
+    pub hits: u64,
+    pub misses: u64,
+    pub hit_rate: f64,
+    pub evictions: u64,
+    pub size: u64,
+    pub capacity: u64,
+}
+
+impl Default for CacheMetrics {
+    fn default() -> Self {
+        Self { hits: 0, misses: 0, hit_rate: 0.0, evictions: 0, size: 0, capacity: 0 }
+    }
+}
+
+/// Query parameters for `stats.daily()`.
+#[derive(Debug, Default)]
+pub struct DailyParams {
+    /// Number of days to include (1–365; server default: 7).
+    pub days: Option<i32>,
+}
+
+// ── Events / reconnect models (issue #642) ────────────────────────────────────
+
+/// Response from `POST /reconnect` or `GET /reconnect/status`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReconnectResponse {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub status: Option<ReconnectStatus>,
+    pub backoff_seconds: Option<u64>,
+    pub requires_resync: Option<bool>,
+    pub message: Option<String>,
+}
+
+/// Reconnect status variant embedded in [`ReconnectResponse`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ReconnectStatus {
+    Ready { session_id: String },
+    RetryAfter { wait_seconds: u64 },
+    SessionExpired,
+    InvalidToken,
+}
+
+// ── Admin / bulk-status models (issue #644) ───────────────────────────────────
+
+/// Per-item failure reported inside [`BulkStatusResponse`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct BulkUpdateError {
+    pub id: String,
+    pub error: String,
+}
+
+/// Response from `POST /admin/transactions/bulk-status`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BulkStatusResponse {
+    pub updated: usize,
+    pub failed: usize,
+    #[serde(default)]
+    pub errors: Vec<BulkUpdateError>,
 }
