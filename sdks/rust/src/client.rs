@@ -1,4 +1,5 @@
 use crate::error::SynapseError;
+use crate::resources::health::Health;
 use crate::resources::settlements::Settlements;
 use crate::admin::AdminClient;
 use crate::error::{
@@ -78,6 +79,9 @@ impl SynapseClient {
         }
     }
 
+    /// Access the health resource.
+    pub fn health(&self) -> Health {
+        Health::new(self.clone())
     /// Return a handle for transaction endpoints.
     pub fn transactions(&self) -> Transactions {
         Transactions { client: self }
