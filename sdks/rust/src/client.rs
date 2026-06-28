@@ -547,7 +547,7 @@ mod tests {
                     return Err(SynapseError::Api { status, message: body_text });
                     return Err(SynapseError::Api { status, message: body });
                 }
-                resp.json::<T>().await.map_err(SynapseError::Network)
+                resp.json::<T>().await.map_err(|e| SynapseError::Decode(e.to_string()))
             }
         })
         .await
